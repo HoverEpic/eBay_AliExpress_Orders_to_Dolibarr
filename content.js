@@ -186,6 +186,11 @@ function extractTransactions(supplierIds = {}) {
             subprice: price,
             qty: quantity,
             total_ht: displayedTotalPrice ?? price * quantity
+          },{
+            desc: "frais port/douane",
+            subprice: displayedTotalPrice - (price * quantity),
+            qty: 1,
+            total_ht: displayedTotalPrice - (price * quantity)
           }],
           _previewOrderId: orderId || 'ID non détecté',
           _previewDate: displayDate
@@ -195,6 +200,10 @@ function extractTransactions(supplierIds = {}) {
   }
 
   return transactions;
+}
+
+function formatReviewAmount(amount) {
+  return `${new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount)} €`;
 }
 
 function showTransactionReview(transactions, syncedSupplierRefs) {
@@ -221,7 +230,7 @@ function showTransactionReview(transactions, syncedSupplierRefs) {
     const table = document.createElement('table');
     table.style.cssText = 'width:100%;border-collapse:collapse;text-align:left;';
     const header = document.createElement('tr');
-    for (const label of ['Envoyer', 'État', 'Commande', 'Date', 'Article', 'Prix']) {
+    for (const label of ['Envoyer', 'État', 'Commande', 'Date', 'Article', 'Prix unitaire', 'Quantité', 'Total commande', 'Frais / écart']) {
       const cell = document.createElement('th');
       cell.innerText = label;
       cell.style.cssText = 'padding:8px;border-bottom:2px solid #ccc;white-space:nowrap;';
@@ -248,12 +257,22 @@ function showTransactionReview(transactions, syncedSupplierRefs) {
       checkboxes.push({ checkbox, transaction });
       row.appendChild(checkboxCell);
 
+      const line = transaction.lines[0];
+      const quantity = Number(line.qty) || 1;
+      const unitPrice = Number(line.subprice) || 0;
+      const calculatedTotal = unitPrice * quantity;
+      const storedTotal = line.total_ht === undefined || line.total_ht === null ? calculatedTotal : Number(line.total_ht);
+      const orderTotal = Number.isFinite(storedTotal) ? storedTotal : calculatedTotal;
+      const fees = Number((orderTotal - calculatedTotal).toFixed(2));
       const values = [
         !canCheckSync ? 'Référence fournisseur manquante' : alreadySynced ? 'Déjà synchronisée' : 'À synchroniser',
         transaction._previewOrderId || refSupplier || 'ID non détecté',
         transaction._previewDate || transaction.date,
-        transaction.lines[0].desc,
-        String(transaction.lines[0].subprice)
+        line.desc,
+        formatReviewAmount(unitPrice),
+        String(quantity),
+        formatReviewAmount(orderTotal),
+        formatReviewAmount(fees)
       ];
       for (let index = 0; index < values.length; index++) {
         const cell = document.createElement('td');

@@ -6,7 +6,7 @@ Extension Chrome/Edge qui aide à exporter vers Dolibarr les achats affichés su
 
 - Extraction des commandes visibles sur les pages d’achats eBay France/États-Unis et AliExpress prises en charge, avec numéro de commande, date, description, prix et quantité lorsque ces informations sont présentes dans la page.
 - Export des données extraites dans un fichier CSV avec prix et quantité.
-- Prévisualisation des commandes avant l’envoi, avec cases à cocher et vérification en direct des références fournisseurs dans les factures de Dolibarr.
+- Prévisualisation des commandes avant l’envoi, avec cases à cocher, vérification en direct des références fournisseurs dans les factures de Dolibarr, quantité, prix unitaire, total de commande et frais/écart estimés.
 - Envoi des transactions à Dolibarr, actuellement vers l’endpoint des factures fournisseurs (`/api/index.php/supplierinvoices`).
 - Page d’options pour configurer l’URL Dolibarr et la clé API, tester la connexion et choisir un tiers fournisseur distinct pour eBay et AliExpress.
 - Récupération des tiers fournisseurs depuis Dolibarr ; leurs identifiants sélectionnés sont enregistrés dans la configuration de l’extension.
