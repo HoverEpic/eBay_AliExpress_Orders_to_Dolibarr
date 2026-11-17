@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vérifier les commandes - Dolibarr</title>
+  <style>
+	body {
+	  margin: 0;
+	  padding: 20px;
+	  color: #222;
+	  background: #f4f6f8;
+	  font: 14px Arial, sans-serif;
+	}
+
+	main {
+	  max-width: 1800px;
+	  margin: 0 auto;
+	  padding: 20px;
+	  background: #fff;
+	  border-radius: 8px;
+	  box-shadow: 0 4px 18px rgba(0, 0, 0, .12);
+	}
+
+	h1 { margin-top: 0; }
+	.table-wrap { overflow: auto; max-height: 65vh; }
+	table { width: 100%; border-collapse: collapse; text-align: left; }
+	th, td { padding: 8px; border-bottom: 1px solid #ddd; vertical-align: top; }
+	th { position: sticky; top: 0; background: #f4f6f8; border-bottom: 2px solid #ccc; white-space: nowrap; }
+	td:first-child { text-align: center; }
+	.status-synced { color: #18723a; font-weight: bold; }
+	.history-note { color: #555; font-size: 12px; }
+	.footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
+	button { padding: 10px 16px; border: 0; border-radius: 5px; color: #fff; font-size: 14px; font-weight: bold; cursor: pointer; }
+	button:disabled { opacity: .6; cursor: wait; }
+	#cancel { background: #666; }
+	#send { background: #4caf50; }
+	#status { color: #a00; white-space: pre-wrap; }
+
+	@media (max-width: 700px) {
+	  body { padding: 8px; }
+	  main { padding: 12px; }
+	}
+  </style>
+  <script src="review.js" defer></script>
+</head>
+<body>
+  <main>
+	<h1>Vérifier les commandes avant synchronisation</h1>
+	<p>Décochez les commandes à ignorer. Les références déjà présentes dans les factures fournisseurs de Dolibarr sont décochées automatiquement.</p>
+	<p id="status" role="status" aria-live="polite"></p>
+	<div class="table-wrap">
+	  <table>
+		<thead>
+		  <tr>
+			<th>Envoyer</th>
+			<th>État</th>
+			<th>Commande</th>
+			<th>Date</th>
+			<th>Article</th>
+			<th>Prix unitaire</th>
+			<th>Quantité</th>
+			<th>Total commande</th>
+			<th>Frais / écart</th>
+		  </tr>
+		</thead>
+		<tbody id="orders"></tbody>
+	  </table>
+	</div>
+	<p class="history-note">La vérification porte sur les factures fournisseurs du tiers sélectionné dans Dolibarr. Les commandes sans référence fournisseur ne peuvent pas être vérifiées ni envoyées.</p>
+	<div class="footer">
+	  <button id="cancel" type="button">Annuler</button>
+	  <button id="send" type="button">Envoyer la sélection</button>
+	</div>
+  </main>
+</body>
+</html>

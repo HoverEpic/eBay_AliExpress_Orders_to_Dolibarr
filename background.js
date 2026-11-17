@@ -105,7 +105,207 @@ async function fetchSuppliers(url, apikey) {
   throw new Error('La liste des tiers est trop volumineuse pour être chargée en une seule opération.');
 }
 
+const transactionReviewStoragePrefix = 'transactionReview:';
+
+function isTransactionReviewPage(sender) {
+  if (!sender.url) return false;
+  try {
+    const senderUrl = new URL(sender.url);
+    const reviewUrl = new URL(chrome.runtime.getURL('review.html'));
+    return senderUrl.origin === reviewUrl.origin && senderUrl.pathname === reviewUrl.pathname;
+  } catch (error) {
+    return false;
+  }
+}
+
+function getTransactionReview(reviewId) {
+  return new Promise((resolve, reject) => {
+    chrome.storage.session.get(`${transactionReviewStoragePrefix}${reviewId}`, result => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      resolve(result[`${transactionReviewStoragePrefix}${reviewId}`]);
+    });
+  });
+}
+
+function removeTransactionReview(reviewId) {
+  return new Promise((resolve, reject) => {
+    chrome.storage.session.remove(`${transactionReviewStoragePrefix}${reviewId}`, () => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+chrome.windows.onRemoved.addListener(windowId => {
+  chrome.storage.session.get(null, reviews => {
+    if (chrome.runtime.lastError) {
+      console.error('Impossible de vérifier les fenêtres de validation fermées:', chrome.runtime.lastError.message);
+      return;
+    }
+
+    for (const [key, review] of Object.entries(reviews)) {
+      if (!key.startsWith(transactionReviewStoragePrefix) || review.windowId !== windowId || review.completed) continue;
+      chrome.storage.session.set({
+        [key]: { ...review, completed: true, selectedTransactions: null }
+      }, () => {
+        if (chrome.runtime.lastError) {
+          console.error('Impossible d’enregistrer l’annulation de la validation:', chrome.runtime.lastError.message);
+        }
+      });
+    }
+  });
+});
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === 'openTransactionReview') {
+    (async () => {
+      try {
+        if (!sender.tab || !Number.isInteger(sender.tab.id) || !/^[\da-f-]{36}$/i.test(request.reviewId || '')) {
+          throw new Error('Impossible d’identifier la page de commandes pour ouvrir la vérification.');
+        }
+        if (!Array.isArray(request.transactions) || !Array.isArray(request.syncedSupplierRefs)) {
+          throw new Error('Les données de vérification sont invalides.');
+        }
+
+        const storageKey = `${transactionReviewStoragePrefix}${request.reviewId}`;
+        await new Promise((resolve, reject) => {
+          chrome.storage.session.set({
+            [storageKey]: {
+              tabId: sender.tab.id,
+              transactions: request.transactions,
+              syncedSupplierRefs: request.syncedSupplierRefs,
+              windowId: null,
+              completed: false,
+              selectedTransactions: null
+            }
+          }, () => {
+            if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+            else resolve();
+          });
+        });
+
+        const reviewWindow = await new Promise((resolve, reject) => {
+          chrome.windows.create({
+            url: `${chrome.runtime.getURL('review.html')}?reviewId=${encodeURIComponent(request.reviewId)}`,
+            type: 'popup',
+            width: 1500,
+            height: 850,
+            focused: true
+          }, createdWindow => {
+            if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+            else resolve(createdWindow);
+          });
+        });
+
+        await new Promise((resolve, reject) => {
+          chrome.storage.session.set({
+            [storageKey]: {
+              tabId: sender.tab.id,
+              transactions: request.transactions,
+              syncedSupplierRefs: request.syncedSupplierRefs,
+              windowId: reviewWindow.id,
+              completed: false,
+              selectedTransactions: null
+            }
+          }, () => {
+            if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+            else resolve();
+          });
+        });
+        sendResponse({ success: true });
+      } catch (error) {
+        try {
+          await removeTransactionReview(request.reviewId);
+        } catch (cleanupError) {
+          console.error('Impossible de nettoyer les données de vérification après une erreur:', cleanupError);
+        }
+        sendResponse({ success: false, error: error.message || 'Impossible d’ouvrir la fenêtre de vérification.' });
+      }
+    })();
+    return true;
+  }
+
+  if (request.action === 'getTransactionReview') {
+    if (!isTransactionReviewPage(sender) || !/^[\da-f-]{36}$/i.test(request.reviewId || '')) {
+      sendResponse({ success: false, error: 'Cette page ne peut pas accéder à la vérification des commandes.' });
+      return;
+    }
+    getTransactionReview(request.reviewId).then(review => {
+      if (!review) {
+        sendResponse({ success: false, error: 'Les données de vérification sont introuvables.' });
+        return;
+      }
+      sendResponse({ success: true, transactions: review.transactions, syncedSupplierRefs: review.syncedSupplierRefs, windowId: review.windowId });
+    }).catch(error => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  if (request.action === 'getTransactionReviewResult') {
+    (async () => {
+      try {
+        if (!sender.tab || !/^[\da-f-]{36}$/i.test(request.reviewId || '')) {
+          throw new Error('Cette page ne peut pas récupérer la sélection des commandes.');
+        }
+        const review = await getTransactionReview(request.reviewId);
+        if (!review || sender.tab.id !== review.tabId) {
+          throw new Error('Les données de vérification sont introuvables pour cette page.');
+        }
+        if (!review.completed) {
+          sendResponse({ success: true, completed: false });
+          return;
+        }
+
+        sendResponse({ success: true, completed: true, selectedTransactions: review.selectedTransactions });
+        await removeTransactionReview(request.reviewId).catch(error => {
+          console.error('Impossible de nettoyer les données de vérification terminée:', error);
+        });
+      } catch (error) {
+        sendResponse({ success: false, error: error.message || 'Impossible de récupérer la sélection des commandes.' });
+      }
+    })();
+    return true;
+  }
+
+  if (request.action === 'completeTransactionReview') {
+    (async () => {
+      try {
+        if (!isTransactionReviewPage(sender) || !/^[\da-f-]{36}$/i.test(request.reviewId || '')) {
+          throw new Error('Cette page ne peut pas terminer la vérification des commandes.');
+        }
+        const review = await getTransactionReview(request.reviewId);
+        if (!review) throw new Error('Les données de vérification sont introuvables.');
+
+        let selectedTransactions = null;
+        if (request.selectedIndexes !== null) {
+          if (!Array.isArray(request.selectedIndexes) || request.selectedIndexes.some(index => !Number.isInteger(index) || index < 0 || index >= review.transactions.length)) {
+            throw new Error('La sélection des commandes est invalide.');
+          }
+          selectedTransactions = [...new Set(request.selectedIndexes)].map(index => review.transactions[index]);
+        }
+
+        const storageKey = `${transactionReviewStoragePrefix}${request.reviewId}`;
+        await new Promise((resolve, reject) => {
+          chrome.storage.session.set({
+            [storageKey]: { ...review, completed: true, selectedTransactions }
+          }, () => {
+            if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+            else resolve();
+          });
+        });
+        sendResponse({ success: true });
+      } catch (error) {
+        sendResponse({ success: false, error: error.message || 'Impossible d’enregistrer la sélection des commandes.' });
+      }
+    })();
+    return true;
+  }
+
   if (request.action === "getSuppliers") {
     (async () => {
       try {

@@ -1,11 +1,12 @@
 {
   "manifest_version": 3,
   "name": "eBay & AliExpress to Dolibarr",
-  "version": "2.4",
+  "version": "2.5",
   "description": "Exporte et envoie vos transactions eBay et AliExpress vers Dolibarr via son API",
   "permissions": [
     "activeTab",
-    "storage"
+    "storage",
+    "windows"
   ],
   "optional_host_permissions": [
     "http://*/*",

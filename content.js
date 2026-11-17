@@ -202,128 +202,26 @@ function extractTransactions(supplierIds = {}) {
   return transactions;
 }
 
-function formatReviewAmount(amount) {
-  return `${new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount)} €`;
-}
-
-function showTransactionReview(transactions, syncedSupplierRefs) {
-  return new Promise(resolve => {
-    const overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:2147483647;display:flex;align-items:center;justify-content:center;padding:20px;';
-
-    const panel = document.createElement('section');
-    panel.setAttribute('role', 'dialog');
-    panel.setAttribute('aria-modal', 'true');
-    panel.setAttribute('aria-labelledby', 'dolibarr-review-title');
-    panel.style.cssText = 'background:#fff;color:#222;width:min(1000px,95vw);max-height:90vh;overflow:auto;border-radius:8px;padding:20px;box-shadow:0 8px 32px rgba(0,0,0,.35);font:14px Arial,sans-serif;';
-
-    const title = document.createElement('h2');
-    title.id = 'dolibarr-review-title';
-    title.innerText = 'Vérifier les commandes avant synchronisation';
-    title.style.marginTop = '0';
-
-    const help = document.createElement('p');
-    help.innerText = 'Décochez les commandes à ignorer. Les références déjà présentes dans les factures fournisseurs de Dolibarr sont décochées automatiquement.';
-
-    const tableWrap = document.createElement('div');
-    tableWrap.style.cssText = 'overflow:auto;';
-    const table = document.createElement('table');
-    table.style.cssText = 'width:100%;border-collapse:collapse;text-align:left;';
-    const header = document.createElement('tr');
-    for (const label of ['Envoyer', 'État', 'Commande', 'Date', 'Article', 'Prix unitaire', 'Quantité', 'Total commande', 'Frais / écart']) {
-      const cell = document.createElement('th');
-      cell.innerText = label;
-      cell.style.cssText = 'padding:8px;border-bottom:2px solid #ccc;white-space:nowrap;';
-      header.appendChild(cell);
-    }
-    const thead = document.createElement('thead');
-    thead.appendChild(header);
-    const tbody = document.createElement('tbody');
-    const checkboxes = [];
-
-    for (const transaction of transactions) {
-      const row = document.createElement('tr');
-      const refSupplier = String(transaction.ref_supplier || '').trim();
-      const canCheckSync = Boolean(refSupplier);
-      const alreadySynced = canCheckSync && syncedSupplierRefs.has(refSupplier.toLowerCase());
-      const checkboxCell = document.createElement('td');
-      checkboxCell.style.cssText = 'padding:8px;border-bottom:1px solid #ddd;text-align:center;';
-      const checkbox = document.createElement('input');
-      checkbox.type = 'checkbox';
-      checkbox.checked = canCheckSync && !alreadySynced;
-      checkbox.disabled = !canCheckSync;
-      checkbox.setAttribute('aria-label', `Envoyer ${transaction.lines[0].desc}`);
-      checkboxCell.appendChild(checkbox);
-      checkboxes.push({ checkbox, transaction });
-      row.appendChild(checkboxCell);
-
-      const line = transaction.lines[0];
-      const quantity = Number(line.qty) || 1;
-      const unitPrice = Number(line.subprice) || 0;
-      const calculatedTotal = unitPrice * quantity;
-      const storedTotal = line.total_ht === undefined || line.total_ht === null ? calculatedTotal : Number(line.total_ht);
-      const orderTotal = Number.isFinite(storedTotal) ? storedTotal : calculatedTotal;
-      const fees = Number((orderTotal - calculatedTotal).toFixed(2));
-      const values = [
-        !canCheckSync ? 'Référence fournisseur manquante' : alreadySynced ? 'Déjà synchronisée' : 'À synchroniser',
-        transaction._previewOrderId || refSupplier || 'ID non détecté',
-        transaction._previewDate || transaction.date,
-        line.desc,
-        formatReviewAmount(unitPrice),
-        String(quantity),
-        formatReviewAmount(orderTotal),
-        formatReviewAmount(fees)
-      ];
-      for (let index = 0; index < values.length; index++) {
-        const cell = document.createElement('td');
-        cell.innerText = values[index];
-        cell.style.cssText = `padding:8px;border-bottom:1px solid #ddd;${index === 0 && alreadySynced ? 'color:#18723a;font-weight:bold;' : ''}`;
-        row.appendChild(cell);
-      }
-      tbody.appendChild(row);
-    }
-
-    table.append(thead, tbody);
-    tableWrap.appendChild(table);
-
-    const historyNote = document.createElement('p');
-    historyNote.innerText = 'La vérification porte sur les factures fournisseurs du tiers sélectionné dans Dolibarr. Les commandes sans référence fournisseur ne peuvent pas être vérifiées ni envoyées.';
-    historyNote.style.cssText = 'font-size:12px;color:#555;';
-
-    const footer = document.createElement('div');
-    footer.style.cssText = 'display:flex;justify-content:flex-end;gap:10px;margin-top:16px;';
-    const cancelButton = document.createElement('button');
-    cancelButton.type = 'button';
-    cancelButton.innerText = 'Annuler';
-    cancelButton.style.cssText = buttonStyle('#666');
-    const sendButton = document.createElement('button');
-    sendButton.type = 'button';
-    sendButton.innerText = 'Envoyer la sélection';
-    sendButton.style.cssText = buttonStyle('#4CAF50');
-
-    const handleEscape = event => {
-      if (event.key === 'Escape' && overlay.isConnected) close(null);
-    };
-    const close = result => {
-      document.removeEventListener('keydown', handleEscape);
-      overlay.remove();
-      resolve(result);
-    };
-    cancelButton.addEventListener('click', () => close(null));
-    overlay.addEventListener('click', event => {
-      if (event.target === overlay) close(null);
-    });
-    document.addEventListener('keydown', handleEscape);
-    sendButton.addEventListener('click', () => {
-      close(checkboxes.filter(item => item.checkbox.checked).map(item => item.transaction));
-    });
-
-    footer.append(cancelButton, sendButton);
-    panel.append(title, help, tableWrap, historyNote, footer);
-    overlay.appendChild(panel);
-    document.body.appendChild(overlay);
-    sendButton.focus();
+async function showTransactionReview(transactions, syncedSupplierRefs) {
+  const reviewId = crypto.randomUUID();
+  const response = await chrome.runtime.sendMessage({
+    action: 'openTransactionReview',
+    reviewId,
+    transactions,
+    syncedSupplierRefs: [...syncedSupplierRefs]
   });
+  if (!response?.success) {
+    throw new Error(response?.error || 'Impossible d’ouvrir la fenêtre de vérification.');
+  }
+
+  while (true) {
+    const result = await chrome.runtime.sendMessage({ action: 'getTransactionReviewResult', reviewId });
+    if (!result?.success) {
+      throw new Error(result?.error || 'Impossible de récupérer la sélection des commandes.');
+    }
+    if (result.completed) return result.selectedTransactions;
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
 }
 
 // Boutons d'action sur les pages
