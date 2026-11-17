@@ -17,7 +17,7 @@ const months = {
 const hostname = window.location.hostname;
 
 // Fonction pour extraire les transactions selon le site actif
-function extractTransactions() {
+function extractTransactions(supplierIds = {}) {
   const transactions = [];
 
   // --- TRAITEMENT EBAY ---
@@ -44,7 +44,7 @@ function extractTransactions() {
       transactions.push({
         ref: "auto",
         ref_supplier: orderId,
-        socid: 309,
+        socid: supplierIds.ebay,
         order_supplier: 1,
         date: formattedDate,
         note_private: 'Ajout automatique module eBay & AliExpress to Dolibarr',
@@ -82,7 +82,7 @@ function extractTransactions() {
 
       if (price > 0 || title !== "Article AliExpress") {
         transactions.push({
-          socid: 1, // ID du fournisseur par défaut
+          socid: supplierIds.aliexpress,
           type: 0,
           date: Math.floor(Date.now() / 1000),
           note_private: `Achat AliExpress: ${title} - Date: ${date}`,
@@ -153,7 +153,19 @@ function injectButtons() {
   btnDoli.innerText = "🔄 Envoyer vers Dolibarr";
   btnDoli.style.cssText = buttonStyle("#4CAF50");
   btnDoli.addEventListener("click", async () => {
-    const transactions = extractTransactions();
+    const config = await new Promise(resolve => chrome.storage.sync.get([
+      'dolibarr_ebay_supplier_id',
+      'dolibarr_aliexpress_supplier_id'
+    ], resolve));
+    const isEbay = hostname.includes("ebay.");
+    const supplierId = Number(isEbay ? config.dolibarr_ebay_supplier_id : config.dolibarr_aliexpress_supplier_id);
+
+    if (!Number.isInteger(supplierId) || supplierId <= 0) {
+      alert(`Veuillez configurer le tiers fournisseur ${isEbay ? 'eBay' : 'AliExpress'} dans les options de l’extension.`);
+      return;
+    }
+
+    const transactions = extractTransactions(isEbay ? { ebay: supplierId } : { aliexpress: supplierId });
     if (transactions.length === 0) {
       alert("Aucune transaction détectée sur la page.");
       return;

@@ -7,9 +7,10 @@ Extension Chrome/Edge qui aide à exporter vers Dolibarr les achats affichés su
 - Extraction des commandes visibles sur les pages d’achats eBay France/États-Unis et AliExpress prises en charge.
 - Export des données extraites dans un fichier CSV.
 - Envoi des transactions à Dolibarr, actuellement vers l’endpoint des factures fournisseurs (`/api/index.php/supplierinvoices`).
-- Page d’options pour configurer l’URL Dolibarr et la clé API, et tester la connexion.
+- Page d’options pour configurer l’URL Dolibarr et la clé API, tester la connexion et choisir un tiers fournisseur distinct pour eBay et AliExpress.
+- Récupération des tiers fournisseurs depuis Dolibarr ; leurs identifiants sélectionnés sont enregistrés dans la configuration de l’extension.
 
-Les champs et valeurs envoyés à Dolibarr sont définis dans `content.js`. Les identifiants de fournisseurs eBay et AliExpress sont actuellement des valeurs par défaut dans le code : adaptez-les à votre installation Dolibarr avant utilisation.
+Les champs et valeurs envoyés à Dolibarr sont définis dans `content.js`. Les identifiants des fournisseurs utilisés pour les factures sont choisis dans les options de l’extension.
 
 ## Installation (mode développeur)
 
@@ -18,7 +19,9 @@ Les champs et valeurs envoyés à Dolibarr sont définis dans `content.js`. Les 
 3. Activez le **mode développeur**.
 4. Cliquez sur **Charger l’extension non empaquetée** et sélectionnez le dossier du projet.
 5. Ouvrez les options de l’extension et renseignez l’URL de votre instance Dolibarr ainsi que sa clé API.
-6. Cliquez sur **Tester la connexion**, puis enregistrez la configuration.
+6. Cliquez sur **Charger les fournisseurs** et autorisez l’accès au domaine de votre instance Dolibarr lorsque le navigateur le demande.
+7. Choisissez un tiers fournisseur pour eBay et un autre pour AliExpress, puis cliquez sur **Enregistrer**.
+8. Facultativement, cliquez sur **Tester la connexion** pour vérifier l’accès à l’API.
 
 L’URL configurée doit être la racine de Dolibarr, par exemple `https://votre-serveur.example/dolibarr`, sans ajouter le chemin `/api/index.php`.
 
@@ -32,14 +35,15 @@ L’extraction dépend de la structure HTML des sites et des éléments présent
 
 ## Sécurité et prérequis
 
-- Une instance Dolibarr accessible depuis le navigateur, avec l’API REST activée et une clé API autorisée à créer des factures fournisseurs.
+- Une instance Dolibarr accessible depuis le navigateur, avec l’API REST activée et une clé API autorisée à lire les tiers et à créer des factures fournisseurs.
 - Le test de connexion interroge l’endpoint des utilisateurs (`/api/index.php/users?limit=1`) ; la clé doit donc également pouvoir accéder à cet endpoint.
-- La clé API est enregistrée dans `chrome.storage.sync`. N’installez l’extension que dans un navigateur et un profil auxquels vous faites confiance.
+- L’extension demande une autorisation d’accès réseau limitée au domaine Dolibarr configuré.
+- La clé API et les deux identifiants fournisseurs sont enregistrés dans `chrome.storage.sync`. N’installez l’extension que dans un navigateur et un profil auxquels vous faites confiance.
 - Les échanges avec Dolibarr doivent utiliser HTTPS, en particulier lorsque la clé API est transmise.
 
 ## Personnalisation
 
-Les pages prises en charge sont déclarées dans `manifest.json`. L’extraction des données, les valeurs par défaut et la génération du CSV se trouvent dans `content.js`. La configuration et le test de connexion sont dans `options.html` et `options.js`, tandis que l’envoi à l’API est géré par `background.js`.
+Les pages prises en charge sont déclarées dans `manifest.json`. L’extraction des données et la génération du CSV se trouvent dans `content.js`. La configuration et les sélections de fournisseurs sont dans `options.html` et `options.js`, tandis que le chargement des tiers et l’envoi à l’API sont gérés par `background.js`.
 
 ## Licence
 

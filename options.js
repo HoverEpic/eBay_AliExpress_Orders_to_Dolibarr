@@ -1,4 +1,7 @@
 const statusEl = document.getElementById('status');
+const ebaySupplierEl = document.getElementById('ebay-supplier');
+const aliexpressSupplierEl = document.getElementById('aliexpress-supplier');
+let savedSupplierIds = { ebay: '', aliexpress: '' };
 
 function setStatus(message, isError = false) {
   statusEl.innerText = message;
@@ -6,18 +9,80 @@ function setStatus(message, isError = false) {
   statusEl.style.fontWeight = 'bold';
 }
 
-async function testDolibarrConnection() {
-  const url = document.getElementById('url').value.trim().replace(/\/+$/, '');
+function getDolibarrSettings() {
+  const urlInput = document.getElementById('url').value.trim();
   const apikey = document.getElementById('apikey').value.trim();
 
-  if (!url || !apikey) {
-    setStatus('Veuillez renseigner l\'URL et la clé API Dolibarr.', true);
-    return;
+  if (!urlInput || !apikey) {
+    throw new Error('Veuillez renseigner l\'URL et la clé API Dolibarr.');
   }
 
-  setStatus('Test de connexion en cours...');
-
+  let parsedUrl;
   try {
+    parsedUrl = new URL(urlInput);
+  } catch (error) {
+    throw new Error('URL Dolibarr invalide.');
+  }
+
+  if (!['http:', 'https:'].includes(parsedUrl.protocol) || parsedUrl.username || parsedUrl.password || parsedUrl.search || parsedUrl.hash) {
+    throw new Error('L\'URL doit utiliser HTTP ou HTTPS et ne pas contenir de paramètres ni d’identifiants.');
+  }
+
+  return { url: urlInput.replace(/\/+$/, ''), apikey, origin: parsedUrl.origin };
+}
+
+function requestDolibarrPermission(origin) {
+  return chrome.permissions.request({ origins: [`${origin}/*`] });
+}
+
+function getResponseMessage(parsed, responseText) {
+  const detail = parsed?.error?.message || parsed?.error || parsed?.message || responseText || 'Réponse vide';
+  return String(detail).slice(0, 300);
+}
+
+function populateSupplierSelect(select, suppliers, selectedId) {
+  select.replaceChildren(new Option('Sélectionnez un fournisseur...', ''));
+  for (const supplier of suppliers) {
+    select.add(new Option(supplier.name, String(supplier.id)));
+  }
+  select.value = selectedId ? String(selectedId) : '';
+}
+
+async function loadSuppliers() {
+  try {
+    const { url, apikey, origin } = getDolibarrSettings();
+    setStatus('Autorisation d’accès puis chargement des fournisseurs...');
+    if (!await requestDolibarrPermission(origin)) {
+      throw new Error('Accès au serveur Dolibarr refusé. Autorisez l’accès pour charger les fournisseurs.');
+    }
+
+    const response = await chrome.runtime.sendMessage({ action: 'getSuppliers', url, apikey });
+    if (!response || !response.success) {
+      throw new Error(response?.error || 'Impossible de charger les fournisseurs depuis Dolibarr.');
+    }
+
+    populateSupplierSelect(ebaySupplierEl, response.suppliers, savedSupplierIds.ebay);
+    populateSupplierSelect(aliexpressSupplierEl, response.suppliers, savedSupplierIds.aliexpress);
+
+    if (response.suppliers.length === 0) {
+      setStatus('Aucun tiers fournisseur trouvé dans Dolibarr.', true);
+      return;
+    }
+
+    setStatus(`${response.suppliers.length} fournisseur(s) chargé(s). Sélectionnez-en un pour chaque site.`);
+  } catch (error) {
+    setStatus(error.message || 'Erreur lors du chargement des fournisseurs.', true);
+  }
+}
+
+async function testDolibarrConnection() {
+  try {
+    const { url, apikey, origin } = getDolibarrSettings();
+    setStatus('Test de connexion en cours...');
+    if (!await requestDolibarrPermission(origin)) {
+      throw new Error('Accès au serveur Dolibarr refusé.');
+    }
+
     const response = await fetch(`${url}/api/index.php/users?limit=1`, {
       method: 'GET',
       headers: {
@@ -27,14 +92,13 @@ async function testDolibarrConnection() {
     });
 
     const responseText = await response.text();
-    let message = '';
-
+    let parsed;
     try {
-      const parsed = JSON.parse(responseText);
-      message = parsed?.error || parsed?.message || responseText;
-    } catch (e) {
-      message = responseText || 'Réponse vide';
+      parsed = JSON.parse(responseText);
+    } catch (error) {
+      parsed = null;
     }
+    const message = getResponseMessage(parsed, responseText);
 
     if (response.ok) {
       setStatus('Connexion prête : Dolibarr répond correctement via l\'API.');
@@ -46,33 +110,69 @@ async function testDolibarrConnection() {
       return;
     }
 
-    if (response.status >= 500) {
-      setStatus(`Erreur serveur Dolibarr (${response.status}) : ${message}`, true);
-      return;
-    }
-
-    setStatus(`Connexion impossible (${response.status}) : ${message}`, true);
+    setStatus(`Erreur Dolibarr (${response.status}) : ${message}`, true);
   } catch (error) {
-    setStatus(`Erreur de connexion : ${error.message || 'URL inaccessible.'}`, true);
+    setStatus(error.message || 'Erreur de connexion à Dolibarr.', true);
   }
 }
 
-document.getElementById('save').addEventListener('click', () => {
-  const url = document.getElementById('url').value.trim().replace(/\/+$/, ''); // Supprime le slash de fin si présent
-  const apikey = document.getElementById('apikey').value.trim();
+async function saveConfiguration() {
+  try {
+    const { url, apikey, origin } = getDolibarrSettings();
+    const ebaySupplierId = Number(ebaySupplierEl.value);
+    const aliexpressSupplierId = Number(aliexpressSupplierEl.value);
 
-  chrome.storage.sync.set({ dolibarr_url: url, dolibarr_apikey: apikey }, () => {
+    if (!Number.isInteger(ebaySupplierId) || ebaySupplierId <= 0 || !Number.isInteger(aliexpressSupplierId) || aliexpressSupplierId <= 0) {
+      throw new Error('Chargez les fournisseurs et sélectionnez-en un pour eBay et un pour AliExpress.');
+    }
+
+    if (!await requestDolibarrPermission(origin)) {
+      throw new Error('L’autorisation d’accès au serveur Dolibarr est nécessaire pour enregistrer cette configuration.');
+    }
+
+    await new Promise((resolve, reject) => {
+      chrome.storage.sync.set({
+        dolibarr_url: url,
+        dolibarr_apikey: apikey,
+        dolibarr_ebay_supplier_id: ebaySupplierId,
+        dolibarr_aliexpress_supplier_id: aliexpressSupplierId
+      }, () => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        resolve();
+      });
+    });
+
+    savedSupplierIds = { ebay: ebaySupplierId, aliexpress: aliexpressSupplierId };
     setStatus('Configuration enregistrée avec succès !');
-    setTimeout(() => { statusEl.innerText = ''; }, 3000);
-  });
-});
+  } catch (error) {
+    setStatus(error.message || 'Impossible d’enregistrer la configuration.', true);
+  }
+}
 
+document.getElementById('load-suppliers').addEventListener('click', loadSuppliers);
+document.getElementById('save').addEventListener('click', saveConfiguration);
 document.getElementById('test-connection').addEventListener('click', testDolibarrConnection);
 
-// Charger les valeurs existantes au démarrage
 document.addEventListener('DOMContentLoaded', () => {
-  chrome.storage.sync.get(['dolibarr_url', 'dolibarr_apikey'], (items) => {
+  chrome.storage.sync.get([
+    'dolibarr_url',
+    'dolibarr_apikey',
+    'dolibarr_ebay_supplier_id',
+    'dolibarr_aliexpress_supplier_id'
+  ], (items) => {
+    if (chrome.runtime.lastError) {
+      setStatus(`Erreur de lecture de la configuration : ${chrome.runtime.lastError.message}`, true);
+      return;
+    }
+
     if (items.dolibarr_url) document.getElementById('url').value = items.dolibarr_url;
     if (items.dolibarr_apikey) document.getElementById('apikey').value = items.dolibarr_apikey;
+    savedSupplierIds = {
+      ebay: items.dolibarr_ebay_supplier_id || '',
+      aliexpress: items.dolibarr_aliexpress_supplier_id || ''
+    };
   });
 });
