@@ -52,4 +52,4 @@ Les pages prises en charge sont déclarées dans `manifest.json`. L’extraction
 
 ## Licence
 
-Aucune licence n’est actuellement déclarée dans ce dépôt.
+Ce projet est distribué sous la licence [MIT](LICENSE), qui autorise notamment l’utilisation, la modification et la redistribution du code, sous réserve de conserver la notice de copyright et le texte de la licence.
