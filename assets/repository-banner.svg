@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640">
+  <defs>
+	<linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+	  <stop offset="0" stop-color="#0f1f45"/>
+	  <stop offset="1" stop-color="#172554"/>
+	</linearGradient>
+	<linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+	  <stop offset="0" stop-color="#34d399"/>
+	  <stop offset="1" stop-color="#10b981"/>
+	</linearGradient>
+	<pattern id="dots" width="44" height="44" patternUnits="userSpaceOnUse">
+	  <circle cx="2" cy="2" r="2" fill="#93c5fd" fill-opacity=".12"/>
+	</pattern>
+  </defs>
+  <rect width="1280" height="640" fill="url(#background)"/>
+  <rect width="1280" height="640" fill="url(#dots)"/>
+  <circle cx="1110" cy="84" r="250" fill="#2563eb" fill-opacity=".13"/>
+  <circle cx="90" cy="600" r="230" fill="#10b981" fill-opacity=".08"/>
+  <g transform="translate(128 112) scale(.82)">
+	<rect width="512" height="512" rx="112" fill="#1d4ed8"/>
+	<path d="M256 62 420 126v117c0 104-68 166-164 207-96-41-164-103-164-207V126z" fill="#fff" fill-opacity=".08"/>
+	<path d="M170 124h124l67 67v186a24 24 0 0 1-24 24H170a24 24 0 0 1-24-24V148a24 24 0 0 1 24-24z" fill="#fff"/>
+	<path d="M294 124v49a18 18 0 0 0 18 18h49z" fill="#dbeafe"/>
+	<path d="M192 228h123M192 275h92M192 322h70" fill="none" stroke="#1e3a8a" stroke-linecap="round" stroke-width="18"/>
+	<circle cx="344" cy="344" r="78" fill="url(#accent)" stroke="#172554" stroke-width="12"/>
+	<path d="M326 345h39m-15-16 16 16-16 16" fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round" stroke-width="14"/>
+  </g>
+  <text x="610" y="260" fill="#fff" font-family="Arial, Helvetica, sans-serif" font-size="58" font-weight="700">eBay &amp; AliExpress</text>
+  <text x="610" y="334" fill="#fff" font-family="Arial, Helvetica, sans-serif" font-size="58" font-weight="700">to Dolibarr</text>
+  <rect x="614" y="382" width="96" height="7" rx="4" fill="url(#accent)"/>
+  <text x="610" y="444" fill="#cbd5e1" font-family="Arial, Helvetica, sans-serif" font-size="27">Des commandes aux factures fournisseurs</text>
+  <text x="610" y="498" fill="#93c5fd" font-family="Arial, Helvetica, sans-serif" font-size="22">Extension Chrome &amp; Edge</text>
+</svg>

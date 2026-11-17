@@ -1,15 +1,18 @@
 # eBay & AliExpress to Dolibarr
 
+![Bannière eBay & AliExpress to Dolibarr](assets/repository-banner.png)
+
 Extension Chrome/Edge qui aide à exporter vers Dolibarr les achats affichés sur les pages de commandes eBay et AliExpress. Elle ajoute des boutons pour télécharger les données extraites en CSV ou les envoyer à l’API REST de Dolibarr.
 
 ## Fonctionnalités
 
 - Extraction des commandes visibles sur les pages d’achats eBay France/États-Unis et AliExpress prises en charge, avec numéro de commande, date, description, prix et quantité lorsque ces informations sont présentes dans la page.
-- Export des données extraites dans un fichier CSV avec prix et quantité.
+- Export des données extraites dans un fichier CSV avec prix et quantité, depuis les boutons en haut de la page ou le menu de l’extension, qui peut préparer automatiquement les pages déjà ouvertes. L’affichage des boutons de page peut être masqué depuis le menu.
+- Envoi vers Dolibarr depuis les boutons en haut de la page ou le menu de l’extension, avec un indicateur des étapes, de la progression de la vérification paginée dans Dolibarr et de l’envoi des factures.
 - Fenêtre séparée de vérification des commandes avant l’envoi, déplaçable sur un autre écran, avec cases à cocher, vérification en direct des références fournisseurs dans les factures de Dolibarr, quantité, prix unitaire, total de commande et frais/écart estimés.
 - Envoi des transactions à Dolibarr, actuellement vers l’endpoint des factures fournisseurs (`/api/index.php/supplierinvoices`).
 - Page d’options pour configurer l’URL Dolibarr et la clé API, tester la connexion et choisir un tiers fournisseur distinct pour eBay et AliExpress.
-- Récupération des tiers fournisseurs depuis Dolibarr ; leurs identifiants sélectionnés sont enregistrés dans la configuration de l’extension.
+- Récupération des tiers fournisseurs depuis Dolibarr ; le nom affiché et l’identifiant sélectionné pour eBay et AliExpress sont enregistrés dans la configuration de l’extension.
 
 Les champs et valeurs envoyés à Dolibarr sont définis dans `content.js`. Les identifiants des fournisseurs utilisés pour les factures sont choisis dans les options de l’extension. L’extraction AliExpress suit une approche basée sur la structure des cartes de commande, inspirée par [AliExpress Order Exporter](https://github.com/su14iman/aliexpress-order-exporter), avec une implémentation adaptée à cette extension.
 
@@ -29,7 +32,7 @@ L’URL configurée doit être la racine de Dolibarr, par exemple `https://votre
 ## Utilisation
 
 1. Connectez-vous à eBay ou AliExpress et ouvrez une page de commandes prise en charge.
-2. Utilisez **Exporter en CSV** pour télécharger les transactions détectées. Pour l’envoi, cliquez sur **Envoyer vers Dolibarr** ; une fenêtre indépendante s’ouvre pour vérifier la liste et cocher les commandes à synchroniser.
+2. Utilisez **Exporter en CSV** ou **Envoyer vers Dolibarr**, en haut de la page de commandes ou depuis le menu ouvert en cliquant sur l’icône de l’extension. Pour l’envoi, une fenêtre indépendante s’ouvre pour vérifier la liste et cocher les commandes à synchroniser.
 3. Les références déjà présentes dans les factures fournisseurs du tiers sélectionné sont décochées par défaut ; vous pouvez les recocher pour les renvoyer.
 4. Vérifiez les factures créées dans Dolibarr.
 
@@ -39,7 +42,7 @@ La vérification est effectuée à chaque synchronisation dans Dolibarr et néce
 
 - Une instance Dolibarr accessible depuis le navigateur, avec l’API REST activée et une clé API autorisée à lire les tiers et factures fournisseurs et à en créer.
 - Le test de connexion interroge l’endpoint des utilisateurs (`/api/index.php/users?limit=1`) ; la clé doit donc également pouvoir accéder à cet endpoint.
-- L’extension demande une autorisation d’accès réseau limitée au domaine Dolibarr configuré, ainsi que l’autorisation de créer la fenêtre indépendante de vérification.
+- L’extension demande une autorisation d’accès réseau limitée au domaine Dolibarr configuré, ainsi que les autorisations nécessaires pour ouvrir la fenêtre indépendante de vérification et préparer une page de commandes déjà ouverte depuis le menu.
 - La clé API et les deux identifiants fournisseurs sont enregistrés dans `chrome.storage.sync`. N’installez l’extension que dans un navigateur et un profil auxquels vous faites confiance.
 - Les échanges avec Dolibarr doivent utiliser HTTPS, en particulier lorsque la clé API est transmise.
 

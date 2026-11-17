@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>eBay &amp; AliExpress vers Dolibarr</title>
+  <style>
+	body {
+	  width: 280px;
+	  margin: 0;
+	  padding: 18px;
+	  color: #172554;
+	  background: #f4f7fc;
+	  font: 14px Arial, sans-serif;
+	}
+
+	header {
+	  display: flex;
+	  align-items: center;
+	  gap: 12px;
+	  margin-bottom: 16px;
+	}
+
+	header img { width: 40px; height: 40px; }
+	h1 { margin: 0; font-size: 16px; }
+	p { margin: 0 0 14px; color: #475569; line-height: 1.4; }
+	button {
+	  display: block;
+	  width: 100%;
+	  margin-top: 10px;
+	  padding: 11px 12px;
+	  border: 0;
+	  border-radius: 7px;
+	  color: #fff;
+	  font-size: 14px;
+	  font-weight: 700;
+	  text-align: left;
+	  cursor: pointer;
+	}
+	button:disabled { opacity: .6; cursor: wait; }
+	#export-csv { background: #1d4ed8; }
+	#send-dolibarr { background: #059669; }
+	.page-buttons-option { display: flex; align-items: flex-start; gap: 8px; margin: 14px 0 0; color: #475569; font-size: 12px; line-height: 1.4; }
+	.page-buttons-option input { margin: 1px 0 0; }
+	#status { min-height: 18px; margin: 12px 0 0; color: #475569; font-size: 12px; }
+	#status.error { color: #b91c1c; }
+  </style>
+  <script src="popup.js" defer></script>
+</head>
+<body>
+  <header>
+	<img src="assets/icon48.png" alt="">
+	<h1>Commandes vers Dolibarr</h1>
+  </header>
+  <p id="page-description">Choisissez une action sur la page de commandes active.</p>
+  <button id="export-csv" type="button">📥 Exporter en CSV</button>
+  <button id="send-dolibarr" type="button">🔄 Envoyer vers Dolibarr</button>
+  <label class="page-buttons-option">
+    <input id="hide-page-buttons" type="checkbox">
+    <span>Masquer les boutons injectés sur la page</span>
+  </label>
+  <p id="status" role="status" aria-live="polite"></p>
+</body>
+</html>

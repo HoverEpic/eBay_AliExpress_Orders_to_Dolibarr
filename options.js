@@ -1,7 +1,10 @@
 const statusEl = document.getElementById('status');
 const ebaySupplierEl = document.getElementById('ebay-supplier');
 const aliexpressSupplierEl = document.getElementById('aliexpress-supplier');
-let savedSupplierIds = { ebay: '', aliexpress: '' };
+let savedSuppliers = {
+  ebay: { id: '', name: '' },
+  aliexpress: { id: '', name: '' }
+};
 
 function setStatus(message, isError = false) {
   statusEl.innerText = message;
@@ -40,12 +43,17 @@ function getResponseMessage(parsed, responseText) {
   return String(detail).slice(0, 300);
 }
 
-function populateSupplierSelect(select, suppliers, selectedId) {
+function populateSupplierSelect(select, suppliers, savedSupplier) {
   select.replaceChildren(new Option('Sélectionnez un fournisseur...', ''));
   for (const supplier of suppliers) {
     select.add(new Option(supplier.name, String(supplier.id)));
   }
-  select.value = selectedId ? String(selectedId) : '';
+
+  const savedId = savedSupplier.id ? String(savedSupplier.id) : '';
+  if (savedId && !Array.from(select.options).some(option => option.value === savedId)) {
+    select.add(new Option(savedSupplier.name || `Fournisseur #${savedId}`, savedId));
+  }
+  select.value = savedId;
 }
 
 async function loadSuppliers() {
@@ -61,8 +69,8 @@ async function loadSuppliers() {
       throw new Error(response?.error || 'Impossible de charger les fournisseurs depuis Dolibarr.');
     }
 
-    populateSupplierSelect(ebaySupplierEl, response.suppliers, savedSupplierIds.ebay);
-    populateSupplierSelect(aliexpressSupplierEl, response.suppliers, savedSupplierIds.aliexpress);
+    populateSupplierSelect(ebaySupplierEl, response.suppliers, savedSuppliers.ebay);
+    populateSupplierSelect(aliexpressSupplierEl, response.suppliers, savedSuppliers.aliexpress);
 
     if (response.suppliers.length === 0) {
       setStatus('Aucun tiers fournisseur trouvé dans Dolibarr.', true);
@@ -121,6 +129,8 @@ async function saveConfiguration() {
     const { url, apikey, origin } = getDolibarrSettings();
     const ebaySupplierId = Number(ebaySupplierEl.value);
     const aliexpressSupplierId = Number(aliexpressSupplierEl.value);
+    const ebaySupplierName = ebaySupplierEl.selectedOptions[0]?.textContent.trim();
+    const aliexpressSupplierName = aliexpressSupplierEl.selectedOptions[0]?.textContent.trim();
 
     if (!Number.isInteger(ebaySupplierId) || ebaySupplierId <= 0 || !Number.isInteger(aliexpressSupplierId) || aliexpressSupplierId <= 0) {
       throw new Error('Chargez les fournisseurs et sélectionnez-en un pour eBay et un pour AliExpress.');
@@ -135,7 +145,9 @@ async function saveConfiguration() {
         dolibarr_url: url,
         dolibarr_apikey: apikey,
         dolibarr_ebay_supplier_id: ebaySupplierId,
-        dolibarr_aliexpress_supplier_id: aliexpressSupplierId
+        dolibarr_ebay_supplier_name: ebaySupplierName,
+        dolibarr_aliexpress_supplier_id: aliexpressSupplierId,
+        dolibarr_aliexpress_supplier_name: aliexpressSupplierName
       }, () => {
         if (chrome.runtime.lastError) {
           reject(new Error(chrome.runtime.lastError.message));
@@ -145,7 +157,10 @@ async function saveConfiguration() {
       });
     });
 
-    savedSupplierIds = { ebay: ebaySupplierId, aliexpress: aliexpressSupplierId };
+    savedSuppliers = {
+      ebay: { id: ebaySupplierId, name: ebaySupplierName },
+      aliexpress: { id: aliexpressSupplierId, name: aliexpressSupplierName }
+    };
     setStatus('Configuration enregistrée avec succès !');
   } catch (error) {
     setStatus(error.message || 'Impossible d’enregistrer la configuration.', true);
@@ -161,7 +176,9 @@ document.addEventListener('DOMContentLoaded', () => {
     'dolibarr_url',
     'dolibarr_apikey',
     'dolibarr_ebay_supplier_id',
-    'dolibarr_aliexpress_supplier_id'
+    'dolibarr_ebay_supplier_name',
+    'dolibarr_aliexpress_supplier_id',
+    'dolibarr_aliexpress_supplier_name'
   ], (items) => {
     if (chrome.runtime.lastError) {
       setStatus(`Erreur de lecture de la configuration : ${chrome.runtime.lastError.message}`, true);
@@ -170,9 +187,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (items.dolibarr_url) document.getElementById('url').value = items.dolibarr_url;
     if (items.dolibarr_apikey) document.getElementById('apikey').value = items.dolibarr_apikey;
-    savedSupplierIds = {
-      ebay: items.dolibarr_ebay_supplier_id || '',
-      aliexpress: items.dolibarr_aliexpress_supplier_id || ''
+    savedSuppliers = {
+      ebay: {
+        id: items.dolibarr_ebay_supplier_id || '',
+        name: items.dolibarr_ebay_supplier_name || ''
+      },
+      aliexpress: {
+        id: items.dolibarr_aliexpress_supplier_id || '',
+        name: items.dolibarr_aliexpress_supplier_name || ''
+      }
     };
+    populateSupplierSelect(ebaySupplierEl, [], savedSuppliers.ebay);
+    populateSupplierSelect(aliexpressSupplierEl, [], savedSuppliers.aliexpress);
   });
 });

@@ -1,6 +1,7 @@
-async function fetchSupplierInvoiceRefs(url, apikey, supplierId) {
+async function fetchSupplierInvoiceRefs(url, apikey, supplierId, onProgress = async () => {}) {
   const pageSize = 100;
   const invoiceRefs = new Set();
+  let processedInvoices = 0;
   const baseUrl = url.replace(/\/+$/, '');
   const sqlFilters = encodeURIComponent(`(t.fk_soc:=:${supplierId})`);
 
@@ -34,6 +35,7 @@ async function fetchSupplierInvoiceRefs(url, apikey, supplierId) {
       throw new Error('Réponse Dolibarr inattendue : la liste des factures fournisseurs n’est pas un tableau.');
     }
 
+    processedInvoices += result.length;
     for (const invoice of result) {
       const invoiceSupplierId = Number(invoice.socid ?? invoice.fk_soc);
       if (invoiceSupplierId !== supplierId) continue;
@@ -43,6 +45,7 @@ async function fetchSupplierInvoiceRefs(url, apikey, supplierId) {
       }
     }
 
+    await onProgress({ page: page + 1, processedInvoices });
     if (result.length < pageSize) {
       return [...invoiceRefs];
     }
@@ -106,6 +109,34 @@ async function fetchSuppliers(url, apikey) {
 }
 
 const transactionReviewStoragePrefix = 'transactionReview:';
+const supplierInvoiceProgressPrefix = 'supplierInvoiceProgress:';
+
+function setSupplierInvoiceProgress(verificationId, progress) {
+  return new Promise((resolve, reject) => {
+    chrome.storage.session.set({
+      [`${supplierInvoiceProgressPrefix}${verificationId}`]: progress
+    }, () => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+function getSupplierInvoiceProgress(verificationId) {
+  return new Promise((resolve, reject) => {
+    const storageKey = `${supplierInvoiceProgressPrefix}${verificationId}`;
+    chrome.storage.session.get(storageKey, result => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      resolve(result[storageKey]);
+    });
+  });
+}
 
 function isTransactionReviewPage(sender) {
   if (!sender.url) return false;
@@ -326,31 +357,96 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
-  if (request.action === "getSyncedSupplierRefs") {
-    chrome.storage.sync.get(['dolibarr_url', 'dolibarr_apikey'], data => {
-      (async () => {
-        try {
-          if (!data.dolibarr_url || !data.dolibarr_apikey) {
-            throw new Error("Configuration Dolibarr manquante. Veuillez configurer l'extension.");
-          }
+  if (request.action === 'getSupplierInvoiceVerificationProgress') {
+    if (!sender.tab || !/^[\da-f-]{36}$/i.test(request.verificationId || '')) {
+      sendResponse({ success: false, error: 'Cette page ne peut pas consulter la progression de vérification.' });
+      return;
+    }
 
-          const supplierId = Number(request.supplierId);
-          if (!Number.isInteger(supplierId) || supplierId <= 0) {
-            throw new Error('Identifiant de fournisseur invalide.');
-          }
+    const storageKey = `${supplierInvoiceProgressPrefix}${request.verificationId}`;
+    chrome.storage.session.get(storageKey, result => {
+      if (chrome.runtime.lastError) {
+        sendResponse({ success: false, error: chrome.runtime.lastError.message });
+        return;
+      }
 
-          const parsedUrl = new URL(data.dolibarr_url);
-          if (!['http:', 'https:'].includes(parsedUrl.protocol) || parsedUrl.username || parsedUrl.password || parsedUrl.search || parsedUrl.hash) {
-            throw new Error('URL Dolibarr invalide. Vérifiez le protocole et le chemin configurés.');
-          }
-
-          const invoiceRefs = await fetchSupplierInvoiceRefs(data.dolibarr_url, data.dolibarr_apikey, supplierId);
-          sendResponse({ success: true, invoiceRefs });
-        } catch (error) {
-          sendResponse({ success: false, error: error.message || 'Impossible de vérifier les factures fournisseurs.' });
+      const progress = result[storageKey];
+      if (progress && progress.tabId !== sender.tab.id) {
+        sendResponse({ success: false, error: 'Cette vérification appartient à une autre page.' });
+        return;
+      }
+      sendResponse({
+        success: true,
+        progress: progress || {
+          tabId: sender.tab.id,
+          page: 0,
+          processedInvoices: 0,
+          completed: false
         }
-      })();
+      });
+      if (progress?.completed) {
+        chrome.storage.session.remove(storageKey, () => {
+          if (chrome.runtime.lastError) {
+            console.error('Impossible de nettoyer la progression de vérification:', chrome.runtime.lastError.message);
+          }
+        });
+      }
     });
+    return true;
+  }
+
+  if (request.action === 'getSyncedSupplierRefs') {
+    if (!sender.tab || !/^[\da-f-]{36}$/i.test(request.verificationId || '')) {
+      sendResponse({ success: false, error: 'Identifiant de vérification invalide.' });
+      return;
+    }
+
+    const verificationId = request.verificationId;
+    const tabId = sender.tab.id;
+    setSupplierInvoiceProgress(verificationId, {
+      tabId,
+      page: 0,
+      processedInvoices: 0,
+      completed: false
+    }).then(() => {
+      chrome.storage.sync.get(['dolibarr_url', 'dolibarr_apikey'], data => {
+        (async () => {
+          try {
+            if (chrome.runtime.lastError) {
+              throw new Error(chrome.runtime.lastError.message);
+            }
+            if (!data.dolibarr_url || !data.dolibarr_apikey) {
+              throw new Error("Configuration Dolibarr manquante. Veuillez configurer l'extension.");
+            }
+
+            const supplierId = Number(request.supplierId);
+            if (!Number.isInteger(supplierId) || supplierId <= 0) {
+              throw new Error('Identifiant de fournisseur invalide.');
+            }
+
+            const parsedUrl = new URL(data.dolibarr_url);
+            if (!['http:', 'https:'].includes(parsedUrl.protocol) || parsedUrl.username || parsedUrl.password || parsedUrl.search || parsedUrl.hash) {
+              throw new Error('URL Dolibarr invalide. Vérifiez le protocole et le chemin configurés.');
+            }
+
+            const invoiceRefs = await fetchSupplierInvoiceRefs(data.dolibarr_url, data.dolibarr_apikey, supplierId, progress =>
+              setSupplierInvoiceProgress(verificationId, { tabId, ...progress, completed: false })
+            );
+            const progress = await getSupplierInvoiceProgress(verificationId);
+            await setSupplierInvoiceProgress(verificationId, { ...progress, page: null, completed: true });
+            sendResponse({ success: true, invoiceRefs });
+          } catch (error) {
+            try {
+              const progress = await getSupplierInvoiceProgress(verificationId);
+              await setSupplierInvoiceProgress(verificationId, { ...progress, tabId, completed: true, error: error.message });
+            } catch (progressError) {
+              console.error('Impossible de mettre à jour la progression de vérification:', progressError);
+            }
+            sendResponse({ success: false, error: error.message || 'Impossible de vérifier les factures fournisseurs.' });
+          }
+        })();
+      });
+    }).catch(error => sendResponse({ success: false, error: error.message || 'Impossible de démarrer la vérification des factures.' }));
     return true;
   }
 

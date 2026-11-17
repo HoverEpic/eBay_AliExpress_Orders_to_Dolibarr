@@ -224,6 +224,67 @@ async function showTransactionReview(transactions, syncedSupplierRefs) {
   }
 }
 
+let syncStatusTimeout;
+
+function setSyncStatus(message, state = 'loading', progress = null) {
+  const container = document.getElementById('ebay-sync-container');
+  if (!container) return;
+
+  let status = document.getElementById('ebay-sync-status');
+  if (!status) {
+    status = document.createElement('div');
+    status.id = 'ebay-sync-status';
+    status.setAttribute('role', 'status');
+    status.setAttribute('aria-live', 'polite');
+    container.appendChild(status);
+  }
+
+  clearTimeout(syncStatusTimeout);
+  const colors = state === 'error'
+    ? { background: '#fef2f2', color: '#991b1b' }
+    : state === 'success'
+      ? { background: '#ecfdf5', color: '#065f46' }
+      : { background: '#eff6ff', color: '#1e3a8a' };
+  status.style.cssText = `max-width:320px;padding:10px 12px;border-radius:8px;background:${colors.background};color:${colors.color};font:13px Arial,sans-serif;line-height:1.4;box-shadow:0 4px 12px rgba(0,0,0,.18);`;
+  status.textContent = `${state === 'loading' ? '⏳ ' : state === 'success' ? '✓ ' : '⚠ '}${message}`;
+  if (progress) {
+    const progressBar = document.createElement('progress');
+    progressBar.max = 1;
+    progressBar.setAttribute('aria-label', 'Progression de la vérification des factures');
+    progressBar.style.cssText = 'display:block;width:100%;height:8px;margin-top:8px;';
+    status.appendChild(progressBar);
+  }
+
+  if (state !== 'loading') {
+    syncStatusTimeout = setTimeout(() => status.remove(), 10000);
+  }
+}
+
+const hidePageButtonsStorageKey = 'hideInjectedButtons';
+let hideInjectedButtons = false;
+
+function applyPageButtonsVisibility() {
+  for (const buttonId of ['ebay-export-csv', 'ebay-send-dolibarr']) {
+    const button = document.getElementById(buttonId);
+    if (button) button.hidden = hideInjectedButtons;
+  }
+}
+
+chrome.storage.sync.get(hidePageButtonsStorageKey, data => {
+  if (chrome.runtime.lastError) {
+    console.error('Impossible de lire le réglage des boutons de page:', chrome.runtime.lastError.message);
+    return;
+  }
+  hideInjectedButtons = data[hidePageButtonsStorageKey] === true;
+  applyPageButtonsVisibility();
+});
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== 'sync' || !changes[hidePageButtonsStorageKey]) return;
+  hideInjectedButtons = changes[hidePageButtonsStorageKey].newValue === true;
+  applyPageButtonsVisibility();
+});
+
 // Boutons d'action sur les pages
 function injectButtons() {
   if (document.getElementById("ebay-sync-container")) return;
@@ -232,9 +293,9 @@ function injectButtons() {
   container.id = "ebay-sync-container";
   container.style.cssText = `
     position: fixed;
-    bottom: 70px;
+    top: 76px;
     right: 20px;
-    z-index: 9999;
+    z-index: 2147483646;
     display: flex;
     flex-direction: column;
     gap: 10px;
@@ -242,6 +303,7 @@ function injectButtons() {
 
   // Bouton CSV
   const btnCsv = document.createElement("button");
+  btnCsv.id = 'ebay-export-csv';
   btnCsv.innerText = "📥 Exporter en CSV";
   btnCsv.style.cssText = buttonStyle("#0064D2");
   btnCsv.addEventListener("click", () => {
@@ -274,9 +336,12 @@ function injectButtons() {
 
   // Bouton Dolibarr
   const btnDoli = document.createElement("button");
+  btnDoli.id = 'ebay-send-dolibarr';
   btnDoli.innerText = "🔄 Envoyer vers Dolibarr";
   btnDoli.style.cssText = buttonStyle("#4CAF50");
   btnDoli.addEventListener("click", async () => {
+    btnDoli.disabled = true;
+    setSyncStatus('Lecture de la configuration Dolibarr…');
     try {
       const config = await new Promise((resolve, reject) => chrome.storage.sync.get([
         'dolibarr_ebay_supplier_id',
@@ -292,29 +357,82 @@ function injectButtons() {
       const supplierId = Number(isEbay ? config.dolibarr_ebay_supplier_id : config.dolibarr_aliexpress_supplier_id);
 
       if (!Number.isInteger(supplierId) || supplierId <= 0) {
-        alert(`Veuillez configurer le tiers fournisseur ${isEbay ? 'eBay' : 'AliExpress'} dans les options de l’extension.`);
+        const message = `Veuillez configurer le tiers fournisseur ${isEbay ? 'eBay' : 'AliExpress'} dans les options de l’extension.`;
+        setSyncStatus(message, 'error');
+        alert(message);
         return;
       }
 
+      setSyncStatus('Extraction des commandes affichées…');
       const transactions = extractTransactions(isEbay ? { ebay: supplierId } : { aliexpress: supplierId });
       if (transactions.length === 0) {
+        setSyncStatus('Aucune commande détectée sur cette page.', 'error');
         alert("Aucune transaction détectée sur la page.");
         return;
       }
 
-      const lookup = await chrome.runtime.sendMessage({ action: 'getSyncedSupplierRefs', supplierId });
-      if (!lookup || !lookup.success) {
+      const verificationId = crypto.randomUUID();
+      setSyncStatus('Connexion à Dolibarr pour vérifier les factures…', 'loading', { processedInvoices: 0, page: 0 });
+      const lookupPromise = chrome.runtime.sendMessage({ action: 'getSyncedSupplierRefs', supplierId, verificationId })
+        .then(response => ({ response }), error => ({ error }));
+      let progressSignature;
+      let lookup;
+      while (true) {
+        const progressPromise = chrome.runtime.sendMessage({
+          action: 'getSupplierInvoiceVerificationProgress',
+          verificationId
+        }).then(response => ({ response }), error => ({ error }));
+        const outcome = await Promise.race([lookupPromise, progressPromise]);
+        if (outcome.error) throw new Error(outcome.error.message || 'Impossible de vérifier les factures dans Dolibarr.');
+        if (outcome.response && Array.isArray(outcome.response.invoiceRefs)) {
+          lookup = outcome.response;
+          break;
+        }
+        if (!outcome.response?.success) {
+          throw new Error(outcome.response?.error || 'Impossible de lire la progression de vérification.');
+        }
+
+        const verificationProgress = outcome.response.progress;
+        if (verificationProgress.error) throw new Error(verificationProgress.error);
+        const processedInvoices = verificationProgress.processedInvoices || 0;
+        const pages = verificationProgress.page || 0;
+        const signature = `${processedInvoices}:${pages}:${verificationProgress.completed}`;
+        if (signature !== progressSignature) {
+          progressSignature = signature;
+          const progressMessage = verificationProgress.completed
+            ? `Vérification terminée : ${processedInvoices} facture(s) parcourue(s).`
+            : `Vérification dans Dolibarr : ${processedInvoices} facture(s) parcourue(s) sur ${pages} page(s)…`;
+          setSyncStatus(progressMessage, verificationProgress.completed ? 'success' : 'loading', verificationProgress.completed ? null : verificationProgress);
+        }
+        if (verificationProgress.completed) {
+          const lookupResult = await lookupPromise;
+          if (lookupResult.error) throw new Error(lookupResult.error.message || 'Impossible de vérifier les factures dans Dolibarr.');
+          lookup = lookupResult.response;
+          break;
+        }
+        await new Promise(resolve => setTimeout(resolve, 400));
+      }
+      if (!lookup?.success) {
         throw new Error(lookup?.error || 'Impossible de vérifier les références fournisseur dans Dolibarr.');
       }
 
       const syncedSupplierRefs = new Set(lookup.invoiceRefs);
+      setSyncStatus('Ouverture de la fenêtre de vérification des commandes…');
       const selectedTransactions = await showTransactionReview(transactions, syncedSupplierRefs);
-      if (!selectedTransactions || selectedTransactions.length === 0) return;
+      if (!selectedTransactions) {
+        setSyncStatus('Synchronisation annulée.', 'success');
+        return;
+      }
+      if (selectedTransactions.length === 0) {
+        setSyncStatus('Aucune commande sélectionnée pour l’envoi.', 'success');
+        return;
+      }
 
       let successCount = 0;
       let failedCount = 0;
-      for (const tx of selectedTransactions) {
+      for (const [index, tx] of selectedTransactions.entries()) {
         const { _previewDate, _previewOrderId, ...transaction } = tx;
+        setSyncStatus(`Envoi de la facture ${index + 1}/${selectedTransactions.length} vers Dolibarr…`);
         try {
           const response = await chrome.runtime.sendMessage({ action: "sendToDolibarr", transaction });
           if (!response || !response.success) {
@@ -332,16 +450,21 @@ function injectButtons() {
 
       let summary = `Synchronisation terminée : ${successCount}/${selectedTransactions.length} envoyée(s).`;
       if (failedCount) summary += ` ${failedCount} échec(s), consultez la console pour le détail.`;
+      setSyncStatus(summary, failedCount ? 'error' : 'success');
       alert(summary);
     } catch (error) {
       console.error("Erreur pendant la préparation de la synchronisation:", error);
+      setSyncStatus(`Erreur de synchronisation : ${error.message}`, 'error');
       alert(`Impossible de préparer la synchronisation : ${error.message}`);
+    } finally {
+      btnDoli.disabled = false;
     }
   });
 
   container.appendChild(btnCsv);
   container.appendChild(btnDoli);
   document.body.appendChild(container);
+  applyPageButtonsVisibility();
 }
 
 function buttonStyle(color) {
@@ -357,6 +480,30 @@ function buttonStyle(color) {
     box-shadow: 0 4px 8px rgba(0,0,0,0.2);
   `;
 }
+
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action !== 'runPageAction') return;
+
+  const buttonId = request.pageAction === 'exportCsv'
+    ? 'ebay-export-csv'
+    : request.pageAction === 'sendDolibarr'
+      ? 'ebay-send-dolibarr'
+      : null;
+  if (!buttonId) {
+    sendResponse({ success: false, error: 'Action inconnue.' });
+    return;
+  }
+
+  injectButtons();
+  const button = document.getElementById(buttonId);
+  if (!button) {
+    sendResponse({ success: false, error: 'Les boutons ne sont pas disponibles sur cette page.' });
+    return;
+  }
+
+  button.click();
+  sendResponse({ success: true });
+});
 
 window.addEventListener("load", injectButtons);
 setInterval(injectButtons, 2000);
