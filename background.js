@@ -1,3 +1,56 @@
+async function fetchSupplierInvoiceRefs(url, apikey, supplierId) {
+  const pageSize = 100;
+  const invoiceRefs = new Set();
+  const baseUrl = url.replace(/\/+$/, '');
+  const sqlFilters = encodeURIComponent(`(t.fk_soc:=:${supplierId})`);
+
+  for (let page = 0; page < 100; page++) {
+    const endpoint = `${baseUrl}/api/index.php/supplierinvoices?limit=${pageSize}&page=${page}&sqlfilters=${sqlFilters}`;
+    const response = await fetch(endpoint, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+        'DOLAPIKEY': apikey
+      }
+    });
+    const responseText = await response.text();
+    let result;
+
+    try {
+      result = JSON.parse(responseText);
+    } catch (error) {
+      if (!response.ok) {
+        throw new Error(`Erreur HTTP ${response.status}: ${responseText || response.statusText}`);
+      }
+      throw new Error('Dolibarr a renvoyé une réponse JSON invalide pour les factures fournisseurs.');
+    }
+
+    if (!response.ok) {
+      const detail = result?.error?.message || result?.error || result?.message || responseText || response.statusText;
+      throw new Error(`Erreur HTTP ${response.status}: ${detail}`);
+    }
+
+    if (!Array.isArray(result)) {
+      throw new Error('Réponse Dolibarr inattendue : la liste des factures fournisseurs n’est pas un tableau.');
+    }
+
+    for (const invoice of result) {
+      const invoiceSupplierId = Number(invoice.socid ?? invoice.fk_soc);
+      if (invoiceSupplierId !== supplierId) continue;
+      const refSupplier = invoice.ref_supplier;
+      if (refSupplier !== undefined && refSupplier !== null && String(refSupplier).trim()) {
+        invoiceRefs.add(String(refSupplier).trim().toLowerCase());
+      }
+    }
+
+    if (result.length < pageSize) {
+      return [...invoiceRefs];
+    }
+  }
+
+  throw new Error('Trop de factures fournisseurs pour vérifier les références en une seule opération.');
+}
+
 async function fetchSuppliers(url, apikey) {
   const pageSize = 100;
   const suppliers = [];
@@ -70,6 +123,34 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         sendResponse({ success: false, error: error.message || 'Impossible de charger les fournisseurs.' });
       }
     })();
+    return true;
+  }
+
+  if (request.action === "getSyncedSupplierRefs") {
+    chrome.storage.sync.get(['dolibarr_url', 'dolibarr_apikey'], data => {
+      (async () => {
+        try {
+          if (!data.dolibarr_url || !data.dolibarr_apikey) {
+            throw new Error("Configuration Dolibarr manquante. Veuillez configurer l'extension.");
+          }
+
+          const supplierId = Number(request.supplierId);
+          if (!Number.isInteger(supplierId) || supplierId <= 0) {
+            throw new Error('Identifiant de fournisseur invalide.');
+          }
+
+          const parsedUrl = new URL(data.dolibarr_url);
+          if (!['http:', 'https:'].includes(parsedUrl.protocol) || parsedUrl.username || parsedUrl.password || parsedUrl.search || parsedUrl.hash) {
+            throw new Error('URL Dolibarr invalide. Vérifiez le protocole et le chemin configurés.');
+          }
+
+          const invoiceRefs = await fetchSupplierInvoiceRefs(data.dolibarr_url, data.dolibarr_apikey, supplierId);
+          sendResponse({ success: true, invoiceRefs });
+        } catch (error) {
+          sendResponse({ success: false, error: error.message || 'Impossible de vérifier les factures fournisseurs.' });
+        }
+      })();
+    });
     return true;
   }
 

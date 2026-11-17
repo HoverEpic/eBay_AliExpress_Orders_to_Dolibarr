@@ -16,6 +16,91 @@ const months = {
 
 const hostname = window.location.hostname;
 
+function getAliExpressOrderId(card) {
+  const orderElement = card.querySelector('[data-order-id], [class*="order-id"], [class*="orderId"]');
+  const dataOrderId = orderElement?.dataset.orderId;
+  if (dataOrderId && /^[A-Z0-9-]{6,}$/i.test(dataOrderId.trim())) return dataOrderId.trim();
+
+  const orderLabelPattern = /(?:order\s*(?:id|no\.?|number)|order\s*#|bestellnummer|n[°º]\s*(?:de\s*)?commande|num[eé]ro de commande|n[uú]mero de pedido|订单号)\s*[:：#]?\s*([A-Z0-9-]{6,})/i;
+  const elementText = orderElement?.innerText || '';
+  const elementMatch = elementText.match(orderLabelPattern);
+  if (elementMatch) return elementMatch[1];
+  if (/^[A-Z0-9-]{6,}$/i.test(elementText.trim())) return elementText.trim();
+
+  const infoContainer = card.querySelector('.order-item-header-right-info');
+  const infoLines = infoContainer ? Array.from(infoContainer.querySelectorAll('div')).map(line => line.innerText.trim()).filter(Boolean) : [];
+  for (const line of infoLines) {
+    const lineMatch = line.match(orderLabelPattern);
+    if (lineMatch) return lineMatch[1];
+  }
+  const headerId = infoLines[1]?.match(/([0-9]{6,})/);
+  if (headerId) return headerId[1];
+
+  const textMatch = card.innerText.match(orderLabelPattern);
+  if (textMatch) return textMatch[1];
+
+  for (const link of card.querySelectorAll('a[href]')) {
+    try {
+      const linkUrl = new URL(link.href);
+      const orderId = linkUrl.searchParams.get('orderId') || linkUrl.searchParams.get('order_id');
+      if (orderId) return orderId;
+    } catch (error) {
+      // Ignore malformed page links and try the other order links.
+    }
+  }
+
+  return null;
+}
+
+function parseAliExpressDate(text) {
+  const normalizedText = text.trim().replace(/,/g, ' ');
+  const isoMatch = normalizedText.match(/(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+  if (isoMatch) {
+    return { date: `${isoMatch[1]}-${isoMatch[2].padStart(2, '0')}-${isoMatch[3].padStart(2, '0')}`, timestamp: Math.floor(new Date(Number(isoMatch[1]), Number(isoMatch[2]) - 1, Number(isoMatch[3])).getTime() / 1000) };
+  }
+
+  const dateMatch = normalizedText.match(/(\d{1,2})[.\-/\s]+([\p{L}.]+|\d{1,2})[.\-/\s]+(\d{4})/u);
+  if (!dateMatch) return null;
+
+  const monthNames = {
+    jan: 1, januar: 1, january: 1, janvier: 1,
+    feb: 2, februar: 2, february: 2, fevr: 2, fevrier: 2,
+    mar: 3, maar: 3, maart: 3, march: 3, mars: 3, marz: 3,
+    apr: 4, avr: 4, april: 4, avril: 4,
+    may: 5, mai: 5,
+    jun: 6, juni: 6, june: 6, juin: 6,
+    jul: 7, juil: 7, juli: 7, july: 7, juillet: 7,
+    aug: 8, august: 8, aout: 8,
+    sep: 9, sept: 9, september: 9, septembre: 9,
+    oct: 10, oktober: 10, october: 10, octobre: 10,
+    nov: 11, november: 11,
+    dec: 12, dez: 12, december: 12, decembre: 12
+  };
+  const monthToken = dateMatch[2].toLowerCase().replace(/\.$/, '').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const month = /^\d{1,2}$/.test(monthToken) ? Number(monthToken) : monthNames[monthToken] || monthNames[monthToken.slice(0, 3)];
+  const day = Number(dateMatch[1]);
+  const year = Number(dateMatch[3]);
+  if (!month || month > 12 || day < 1 || day > 31) return null;
+
+  return { date: `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`, timestamp: Math.floor(new Date(year, month - 1, day).getTime() / 1000) };
+}
+
+function parseAliExpressAmount(text) {
+  const value = String(text || '').replace(/[^\d.,-]/g, '');
+  if (!value) return null;
+
+  const separatorIndex = Math.max(value.lastIndexOf(','), value.lastIndexOf('.'));
+  if (separatorIndex < 0) return Number(value);
+
+  const decimalDigits = value.length - separatorIndex - 1;
+  const hasBothSeparators = value.includes(',') && value.includes('.');
+  if (!hasBothSeparators && decimalDigits === 3) return Number(value.replace(/[.,]/g, ''));
+
+  const normalized = value.slice(0, separatorIndex).replace(/[.,]/g, '') + '.' + value.slice(separatorIndex + 1).replace(/[.,]/g, '');
+  const amount = Number(normalized);
+  return Number.isFinite(amount) ? amount : null;
+}
+
 // Fonction pour extraire les transactions selon le site actif
 function extractTransactions(supplierIds = {}) {
   const transactions = [];
@@ -47,6 +132,8 @@ function extractTransactions(supplierIds = {}) {
         socid: supplierIds.ebay,
         order_supplier: 1,
         date: formattedDate,
+        _previewOrderId: orderId,
+        _previewDate: formattedDate,
         note_private: 'Ajout automatique module eBay & AliExpress to Dolibarr',
         lines: [{
             desc: title,
@@ -62,42 +149,162 @@ function extractTransactions(supplierIds = {}) {
   } 
   
   // --- TRAITEMENT ALIEXPRESS ---
-  else if (hostname.includes("aliexpress.")) { // SEE https://github.com/su14iman/aliexpress-order-exporter/blob/main/popup.js#L39
-    // Sélection des blocs de commandes sur AliExpress
-    const orderItems = document.querySelectorAll('.order-item-content-wrap, .order-vou-box, tr.order-item');
+  else if (hostname.includes("aliexpress.")) {
+    const orderItems = document.querySelectorAll('.order-item');
 
     orderItems.forEach(card => {
-      // Extraction du titre de l'article
-      const titleEl = card.querySelector('.product-title, .order-item-title, span[class*="title"]');
-      const title = titleEl ? titleEl.innerText.trim() : "Article AliExpress";
-
-      // Extraction du prix
-      const priceEl = card.querySelector('.price-num, .order-price, span[class*="price"]');
-      const priceText = priceEl ? priceEl.innerText.replace(/[^0-9,.]/g, '').replace(',', '.') : "0";
-      const price = parseFloat(priceText) || 0;
-
-      // Extraction de la date
+      const infoContainer = card.querySelector('.order-item-header-right-info');
+      const infoLines = infoContainer ? Array.from(infoContainer.querySelectorAll('div')).map(line => line.innerText.trim()).filter(Boolean) : [];
       const dateEl = card.querySelector('.order-date, .left-block, div[class*="date"]');
-      const date = dateEl ? dateEl.innerText.replace(/(\r\n|\n|\r)/gm, " ").trim() : "N/A";
+      const dateSource = `${infoLines[0] || ''} ${dateEl?.innerText || ''}`.trim();
+      const parsedDate = parseAliExpressDate(dateSource);
+      const displayDate = parsedDate?.date || dateEl?.innerText.trim() || 'Date inconnue';
+      const orderId = getAliExpressOrderId(card);
 
-      if (price > 0 || title !== "Article AliExpress") {
+      const titleEl = card.querySelector('.order-item-content-info-name [title], .order-item-content-info-name, .order-item-content-info-title, .product-title, .order-item-title, [class*="product-name"]');
+      const title = titleEl?.innerText.trim() || titleEl?.getAttribute('title')?.trim() || 'Achat AliExpress';
+      const quantityEl = card.querySelector('.order-item-content-info-number-quantity');
+      const quantityText = quantityEl?.innerText.replace(/[^\d.,]/g, '').replace(',', '.') || '1';
+      const quantity = Math.max(1, Number.parseFloat(quantityText) || 1);
+      const unitPriceEl = card.querySelector('.order-item-content-info-number [class*="es--wrap"], .order-item-content-info-number [class*="price"]');
+      const totalPriceEl = card.querySelector('.order-item-content-opt-price-total, .order-price, .price-num');
+      const displayedUnitPrice = parseAliExpressAmount(unitPriceEl?.innerText || '');
+      const displayedTotalPrice = parseAliExpressAmount(totalPriceEl?.innerText || '');
+      const price = displayedUnitPrice ?? (displayedTotalPrice !== null ? displayedTotalPrice / quantity : 0);
+      const sku = card.querySelector('.order-item-content-info-sku')?.innerText.trim();
+      const description = sku ? `${title} - ${sku}` : title;
+
+      if (price > 0 || title !== 'Achat AliExpress') {
         transactions.push({
           socid: supplierIds.aliexpress,
           type: 0,
-          date: Math.floor(Date.now() / 1000),
-          note_private: `Achat AliExpress: ${title} - Date: ${date}`,
+          date: parsedDate?.timestamp || Math.floor(Date.now() / 1000),
+          note_private: `Achat AliExpress: ${description} - Date: ${displayDate}`,
+          ...(orderId ? { ref_supplier: orderId } : {}),
           lines: [{
-            desc: title,
+            desc: description,
             subprice: price,
-            qty: 1,
-            total_ht: price
-          }]
+            qty: quantity,
+            total_ht: displayedTotalPrice ?? price * quantity
+          }],
+          _previewOrderId: orderId || 'ID non détecté',
+          _previewDate: displayDate
         });
       }
     });
   }
 
   return transactions;
+}
+
+function showTransactionReview(transactions, syncedSupplierRefs) {
+  return new Promise(resolve => {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:2147483647;display:flex;align-items:center;justify-content:center;padding:20px;';
+
+    const panel = document.createElement('section');
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-modal', 'true');
+    panel.setAttribute('aria-labelledby', 'dolibarr-review-title');
+    panel.style.cssText = 'background:#fff;color:#222;width:min(1000px,95vw);max-height:90vh;overflow:auto;border-radius:8px;padding:20px;box-shadow:0 8px 32px rgba(0,0,0,.35);font:14px Arial,sans-serif;';
+
+    const title = document.createElement('h2');
+    title.id = 'dolibarr-review-title';
+    title.innerText = 'Vérifier les commandes avant synchronisation';
+    title.style.marginTop = '0';
+
+    const help = document.createElement('p');
+    help.innerText = 'Décochez les commandes à ignorer. Les références déjà présentes dans les factures fournisseurs de Dolibarr sont décochées automatiquement.';
+
+    const tableWrap = document.createElement('div');
+    tableWrap.style.cssText = 'overflow:auto;';
+    const table = document.createElement('table');
+    table.style.cssText = 'width:100%;border-collapse:collapse;text-align:left;';
+    const header = document.createElement('tr');
+    for (const label of ['Envoyer', 'État', 'Commande', 'Date', 'Article', 'Prix']) {
+      const cell = document.createElement('th');
+      cell.innerText = label;
+      cell.style.cssText = 'padding:8px;border-bottom:2px solid #ccc;white-space:nowrap;';
+      header.appendChild(cell);
+    }
+    const thead = document.createElement('thead');
+    thead.appendChild(header);
+    const tbody = document.createElement('tbody');
+    const checkboxes = [];
+
+    for (const transaction of transactions) {
+      const row = document.createElement('tr');
+      const refSupplier = String(transaction.ref_supplier || '').trim();
+      const canCheckSync = Boolean(refSupplier);
+      const alreadySynced = canCheckSync && syncedSupplierRefs.has(refSupplier.toLowerCase());
+      const checkboxCell = document.createElement('td');
+      checkboxCell.style.cssText = 'padding:8px;border-bottom:1px solid #ddd;text-align:center;';
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = canCheckSync && !alreadySynced;
+      checkbox.disabled = !canCheckSync;
+      checkbox.setAttribute('aria-label', `Envoyer ${transaction.lines[0].desc}`);
+      checkboxCell.appendChild(checkbox);
+      checkboxes.push({ checkbox, transaction });
+      row.appendChild(checkboxCell);
+
+      const values = [
+        !canCheckSync ? 'Référence fournisseur manquante' : alreadySynced ? 'Déjà synchronisée' : 'À synchroniser',
+        transaction._previewOrderId || refSupplier || 'ID non détecté',
+        transaction._previewDate || transaction.date,
+        transaction.lines[0].desc,
+        String(transaction.lines[0].subprice)
+      ];
+      for (let index = 0; index < values.length; index++) {
+        const cell = document.createElement('td');
+        cell.innerText = values[index];
+        cell.style.cssText = `padding:8px;border-bottom:1px solid #ddd;${index === 0 && alreadySynced ? 'color:#18723a;font-weight:bold;' : ''}`;
+        row.appendChild(cell);
+      }
+      tbody.appendChild(row);
+    }
+
+    table.append(thead, tbody);
+    tableWrap.appendChild(table);
+
+    const historyNote = document.createElement('p');
+    historyNote.innerText = 'La vérification porte sur les factures fournisseurs du tiers sélectionné dans Dolibarr. Les commandes sans référence fournisseur ne peuvent pas être vérifiées ni envoyées.';
+    historyNote.style.cssText = 'font-size:12px;color:#555;';
+
+    const footer = document.createElement('div');
+    footer.style.cssText = 'display:flex;justify-content:flex-end;gap:10px;margin-top:16px;';
+    const cancelButton = document.createElement('button');
+    cancelButton.type = 'button';
+    cancelButton.innerText = 'Annuler';
+    cancelButton.style.cssText = buttonStyle('#666');
+    const sendButton = document.createElement('button');
+    sendButton.type = 'button';
+    sendButton.innerText = 'Envoyer la sélection';
+    sendButton.style.cssText = buttonStyle('#4CAF50');
+
+    const handleEscape = event => {
+      if (event.key === 'Escape' && overlay.isConnected) close(null);
+    };
+    const close = result => {
+      document.removeEventListener('keydown', handleEscape);
+      overlay.remove();
+      resolve(result);
+    };
+    cancelButton.addEventListener('click', () => close(null));
+    overlay.addEventListener('click', event => {
+      if (event.target === overlay) close(null);
+    });
+    document.addEventListener('keydown', handleEscape);
+    sendButton.addEventListener('click', () => {
+      close(checkboxes.filter(item => item.checkbox.checked).map(item => item.transaction));
+    });
+
+    footer.append(cancelButton, sendButton);
+    panel.append(title, help, tableWrap, historyNote, footer);
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+    sendButton.focus();
+  });
 }
 
 // Boutons d'action sur les pages
@@ -127,9 +334,9 @@ function injectButtons() {
       return;
     }
     
-    let csvContent = "data:text/csv;charset=utf-8,orderId;Date;Product;Price\n";
+    let csvContent = "data:text/csv;charset=utf-8,orderId;Date;Product;Price;Quantity\n";
     txs.forEach(t => {
-      csvContent += `${t.ref_supplier};${t.date};${t.lines[0].desc};${t.lines[0].subprice}\n`;
+      csvContent += `${t.ref_supplier || t._previewOrderId};${t._previewDate || t.date};${t.lines[0].desc};${t.lines[0].subprice};${t.lines[0].qty}\n`;
     });
 
     const encodedUri = encodeURI(csvContent);
@@ -153,34 +360,66 @@ function injectButtons() {
   btnDoli.innerText = "🔄 Envoyer vers Dolibarr";
   btnDoli.style.cssText = buttonStyle("#4CAF50");
   btnDoli.addEventListener("click", async () => {
-    const config = await new Promise(resolve => chrome.storage.sync.get([
-      'dolibarr_ebay_supplier_id',
-      'dolibarr_aliexpress_supplier_id'
-    ], resolve));
-    const isEbay = hostname.includes("ebay.");
-    const supplierId = Number(isEbay ? config.dolibarr_ebay_supplier_id : config.dolibarr_aliexpress_supplier_id);
+    try {
+      const config = await new Promise((resolve, reject) => chrome.storage.sync.get([
+        'dolibarr_ebay_supplier_id',
+        'dolibarr_aliexpress_supplier_id'
+      ], data => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        resolve(data);
+      }));
+      const isEbay = hostname.includes("ebay.");
+      const supplierId = Number(isEbay ? config.dolibarr_ebay_supplier_id : config.dolibarr_aliexpress_supplier_id);
 
-    if (!Number.isInteger(supplierId) || supplierId <= 0) {
-      alert(`Veuillez configurer le tiers fournisseur ${isEbay ? 'eBay' : 'AliExpress'} dans les options de l’extension.`);
-      return;
-    }
-
-    const transactions = extractTransactions(isEbay ? { ebay: supplierId } : { aliexpress: supplierId });
-    if (transactions.length === 0) {
-      alert("Aucune transaction détectée sur la page.");
-      return;
-    }
-
-    let successCount = 0;
-    for (const tx of transactions) {
-      const res = await chrome.runtime.sendMessage({ action: "sendToDolibarr", transaction: tx });
-      if (res && res.success) {
-        successCount++;
-      } else {
-        console.error("Erreur API Dolibarr:", res ? res.error : "Erreur inconnue");
+      if (!Number.isInteger(supplierId) || supplierId <= 0) {
+        alert(`Veuillez configurer le tiers fournisseur ${isEbay ? 'eBay' : 'AliExpress'} dans les options de l’extension.`);
+        return;
       }
+
+      const transactions = extractTransactions(isEbay ? { ebay: supplierId } : { aliexpress: supplierId });
+      if (transactions.length === 0) {
+        alert("Aucune transaction détectée sur la page.");
+        return;
+      }
+
+      const lookup = await chrome.runtime.sendMessage({ action: 'getSyncedSupplierRefs', supplierId });
+      if (!lookup || !lookup.success) {
+        throw new Error(lookup?.error || 'Impossible de vérifier les références fournisseur dans Dolibarr.');
+      }
+
+      const syncedSupplierRefs = new Set(lookup.invoiceRefs);
+      const selectedTransactions = await showTransactionReview(transactions, syncedSupplierRefs);
+      if (!selectedTransactions || selectedTransactions.length === 0) return;
+
+      let successCount = 0;
+      let failedCount = 0;
+      for (const tx of selectedTransactions) {
+        const { _previewDate, _previewOrderId, ...transaction } = tx;
+        try {
+          const response = await chrome.runtime.sendMessage({ action: "sendToDolibarr", transaction });
+          if (!response || !response.success) {
+            failedCount++;
+            console.error("Erreur API Dolibarr:", response ? response.error : "Erreur inconnue");
+            continue;
+          }
+
+          successCount++;
+        } catch (error) {
+          failedCount++;
+          console.error("Erreur API Dolibarr:", error);
+        }
+      }
+
+      let summary = `Synchronisation terminée : ${successCount}/${selectedTransactions.length} envoyée(s).`;
+      if (failedCount) summary += ` ${failedCount} échec(s), consultez la console pour le détail.`;
+      alert(summary);
+    } catch (error) {
+      console.error("Erreur pendant la préparation de la synchronisation:", error);
+      alert(`Impossible de préparer la synchronisation : ${error.message}`);
     }
-    alert(`Synchronisation terminée : ${successCount}/${transactions.length} envoyés à Dolibarr.`);
   });
 
   container.appendChild(btnCsv);
