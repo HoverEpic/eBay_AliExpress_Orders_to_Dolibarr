@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "eBay & AliExpress to Dolibarr",
+  "version": "2.1",
+  "description": "Exporte et envoie vos transactions eBay et AliExpress vers Dolibarr via son API",
+  "permissions": [
+    "activeTab",
+    "storage"
+  ],
+  "options_page": "options.html",
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.ebay.fr/mye/myebay/purchase*",
+        "https://www.ebay.com/mye/myebay/purchase*",
+        "https://*.aliexpress.com/order/index.htm*",
+        "https://*.aliexpress.com/p/order/index.htm*"
+      ],
+      "js": [ "content.js" ]
+    }
+  ]
+}
